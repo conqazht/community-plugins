@@ -50,7 +50,25 @@ local function runDocker(args, callback, timeoutMs)
   return noctalia.runAsync(shellCommand(command), callback, timeoutMs or 30000)
 end
 
-local CHECK_DAEMON_CMD = "systemctl is-active --quiet docker.service 2>/dev/null || pgrep -x dockerd >/dev/null 2>&1 || pidof dockerd >/dev/null 2>&1 || systemctl --user is-active --quiet docker.service 2>/dev/null"
+local CHECK_DAEMON_CMD = table.concat({
+  "endpoint=\"${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)}\"",
+  "endpoint=\"${endpoint:-unix:///var/run/docker.sock}\"",
+  "case \"$endpoint\" in",
+  "  tcp://*|http://*|https://*|ssh://*)",
+  "    exit 0 ;;",
+  "  *)",
+  "    path=\"${endpoint#unix://}\"",
+  "    uid=\"$(id -u 2>/dev/null)\"",
+  "    runtime_dir=\"${XDG_RUNTIME_DIR:-/run/user/$uid}\"",
+  "    if [ \"$path\" = '/var/run/docker.sock' ] || [ \"$path\" = '/run/docker.sock' ]; then",
+  "      systemctl is-active --quiet docker.service",
+  "    elif [ -n \"$uid\" ] && { [ \"$path\" = \"$runtime_dir/docker.sock\" ] || [ \"$path\" = \"/run/user/$uid/docker.sock\" ] || [ \"$path\" = \"$HOME/.docker/run/docker.sock\" ]; }; then",
+  "      systemctl --user is-active --quiet docker.service",
+  "    else",
+  "      exit 1",
+  "    fi ;;",
+  "esac",
+}, "\n")
 
 local function checkDaemonActive(callback)
   local started = noctalia.runAsync(CHECK_DAEMON_CMD, function(result)
